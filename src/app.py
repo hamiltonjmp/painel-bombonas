@@ -48,7 +48,7 @@ def ir_para(pagina):
     st.session_state.pagina_atual = pagina
 
 # ==================================================
-# 3. CARREGAMENTO DE DADOS
+# 3. CARREGAMENTO DE DADOS E FORMATAÇÃO
 # ==================================================
 MESES_PT = {
     1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 
@@ -56,30 +56,26 @@ MESES_PT = {
     9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
 }
 
-# Dicionário para abreviações (usado no novo gráfico)
 MESES_ABREV = {
     1: 'jan', 2: 'fev', 3: 'mar', 4: 'abr',
     5: 'mai', 6: 'jun', 7: 'jul', 8: 'ago',
     9: 'set', 10: 'out', 11: 'nov', 12: 'dez'
 }
 
-def formata_mes(x):
+def formata_mes_grafico(x):
     try:
         if pd.isna(x): return "Data Inválida"
         return f"{MESES_PT[x.month]}/{x.year}"
     except:
         return f"{x.month}/{x.year}"
 
-# --- FUNÇÃO DE FORMATAÇÃO PARA O GRÁFICO ESTILO IMAGEM (jan.25) ---
 def formata_mes_abrev_ano(x):
     try:
         if pd.isna(x): return ""
-        # Pega os últimos 2 dígitos do ano
         ano_curto = str(x.year)[-2:]
         return f"{MESES_ABREV[x.month]}.{ano_curto}"
     except:
         return ""
-# -------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ARQUIVO_DADOS = BASE_DIR / "dados" / "bombonas_v2.csv"
@@ -96,14 +92,17 @@ def carregar_dados_v2():
         df = pd.read_csv(caminho)
         df.columns = df.columns.str.strip().str.lower()
         df["data"] = pd.to_datetime(df["data"])
+        df["ano"] = df["data"].dt.year
+        
+        # --- AJUSTE: Filtro agora usa apenas o nome do mês ---
+        df["mes_nome"] = df["data"].dt.month.map(MESES_PT)
         
         if "local" in df.columns: df["local"] = df["local"].astype(str).str.strip().str.upper()
         if "grupo" in df.columns: 
             df["grupo"] = df["grupo"].astype(str).str.strip().str.upper()
             df = df[~df["grupo"].isin(["UM", "NAN", "NONE"])]
 
-        df['mes_filtro'] = df['data'].apply(formata_mes)
-        df['data_sort'] = df['data']
+        df['mes_grafico'] = df['data'].apply(formata_mes_grafico)
         return df
     except Exception as e: st.error(f"Erro: {e}"); return None
 
@@ -114,7 +113,7 @@ if df is None or df.empty:
     st.stop()
 
 # ==================================================
-# 4. BARRA LATERAL
+# 4. BARRA LATERAL (Filtros)
 # ==================================================
 with st.sidebar:
     if st.session_state.pagina_atual != 'Home':
@@ -132,24 +131,30 @@ with st.sidebar:
     st.markdown("---")
     st.header("🔍 Filtros")
     
-    opcoes_local = sorted(df["local"].unique().tolist())
+    opcoes_ano = sorted(df["ano"].unique().tolist(), reverse=True)
+    filtro_ano = st.multiselect("📅 Ano", options=opcoes_ano)
+    
+    df_temp = df.copy()
+    if filtro_ano:
+        df_temp = df_temp[df_temp["ano"].isin(filtro_ano)]
+
+    # --- AJUSTE: Filtro apenas com Nome do Mês ---
+    # Ordena os meses cronologicamente de 1 a 12
+    ordem_meses = [MESES_PT[i] for i in range(1, 13)]
+    meses_disponiveis = [m for m in ordem_meses if m in df_temp["mes_nome"].unique()]
+    filtro_mes = st.multiselect("🗓️ Mês", options=meses_disponiveis)
+
+    opcoes_local = sorted(df_temp["local"].unique().tolist())
     filtro_local = st.multiselect("📍 Local", options=opcoes_local)
 
-    opcoes_grupo = sorted(df["grupo"].unique().tolist())
+    opcoes_grupo = sorted(df_temp["grupo"].unique().tolist())
     filtro_grupo = st.multiselect("📦 Grupo", options=opcoes_grupo)
 
-    meses_ordenados = df.sort_values("data_sort")["mes_filtro"].unique().tolist()
-    filtro_mes = st.multiselect("🗓️ Mês", options=meses_ordenados)
-
-    st.markdown("---")
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Baixar CSV", csv, "dados.csv", "text/csv")
-
-# Filtros
-df_filtrado = df.copy()
+# Aplicação dos Filtros
+df_filtrado = df_temp.copy()
 if filtro_local: df_filtrado = df_filtrado[df_filtrado["local"].isin(filtro_local)]
 if filtro_grupo: df_filtrado = df_filtrado[df_filtrado["grupo"].isin(filtro_grupo)]
-if filtro_mes: df_filtrado = df_filtrado[df_filtrado["mes_filtro"].isin(filtro_mes)]
+if filtro_mes: df_filtrado = df_filtrado[df_filtrado["mes_nome"].isin(filtro_mes)]
 
 if df_filtrado.empty:
     st.info("Nenhum dado encontrado.")
@@ -163,7 +168,7 @@ diferenca_peso = total_peso_real - peso_ideal_total
 gasto_estimado = total_bombonas * PRECO_ESTIMADO
 
 # ==================================================
-# 6. PÁGINAS DO SISTEMA
+# 5. PÁGINAS DO SISTEMA
 # ==================================================
 
 # --- HOME ---
@@ -189,17 +194,17 @@ if st.session_state.pagina_atual == 'Home':
 
     st.markdown("---")
     st.subheader("📊 Visão Geral")
-    
     resumo = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index()
-    resumo["mes_str"] = resumo["data"].apply(formata_mes)
+    resumo = resumo[resumo["bombonas"] > 0]
+    resumo["mes_str"] = resumo["data"].apply(formata_mes_grafico)
     
     fig = px.bar(resumo, x="mes_str", y="bombonas", text="bombonas", title="Total de Bombonas Mês")
     fig.update_traces(textposition='outside', texttemplate='<b>%{text}</b>')
-    fig.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'})
     st.plotly_chart(fig, use_container_width=True)
 
 
-# --- PESO (MÓDULO COM AS ADIÇÕES) ---
+# --- PESO ---
 elif st.session_state.pagina_atual == 'Peso':
     st.title("⚖️ Análise de Peso")
     st.markdown("---")
@@ -209,280 +214,114 @@ elif st.session_state.pagina_atual == 'Peso':
     k2.metric(f"Meta ({META_PESO}kg)", f"{peso_ideal_total:,.2f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
     k3.metric("Diferença", f"{diferenca_peso:,.2f} kg".replace(",", "X").replace(".", ",").replace("X", "."), delta_color="inverse")
 
-    # ==============================================================================
-    # GRÁFICO DE PESO (ESTILO IMAGEM - LINHA + MÉDIA)
-    # ==============================================================================
     st.markdown("---")
-    
-    # 1. Preparação dos dados para o peso
-    df_peso_mes_novo = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["peso"].sum().reset_index().sort_values("data")
-    
-    # Formatação de data estilo imagem (jan.25, fev.25)
-    df_peso_mes_novo["mes_fmt"] = df_peso_mes_novo["data"].apply(formata_mes_abrev_ano)
-    
-    # Cálculo da média geral mensal do peso real
-    media_peso_ref = df_peso_mes_novo["peso"].mean()
-    df_peso_mes_novo["media_ref_val"] = media_peso_ref
+    df_p_m_n = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["peso"].sum().reset_index().sort_values("data")
+    df_p_m_n = df_p_m_n[df_p_m_n["peso"] > 0]
+    df_p_m_n["mes_fmt"] = df_p_m_n["data"].apply(formata_mes_abrev_ano)
+    media_p_ref = df_p_m_n["peso"].mean()
 
-    # 2. Construção do Gráfico
-    fig_peso_novo = go.Figure()
-
-    # Linha Azul (Total Peso Real Mensal)
-    fig_peso_novo.add_trace(go.Scatter(
-        x=df_peso_mes_novo["mes_fmt"],
-        y=df_peso_mes_novo["peso"],
-        mode='lines+markers+text',
-        name='Total Peso Real',
-        line=dict(color='#1f618d', width=3),
-        marker=dict(size=8, color='#1f618d'),
-        text=df_peso_mes_novo["peso"].astype(int),
-        textposition="top center",
-        textfont=dict(color='#1f618d', family="Arial Black")
-    ))
-
-    # Linha Laranja (Média Geral de Peso Real)
-    fig_peso_novo.add_trace(go.Scatter(
-        x=df_peso_mes_novo["mes_fmt"],
-        y=df_peso_mes_novo["media_ref_val"],
-        mode='lines+markers+text',
-        name='Média do Período',
-        line=dict(color='#E65100', width=3),
-        marker=dict(size=8, color='#E65100'),
-        text=df_peso_mes_novo["media_ref_val"].astype(int),
-        textposition="bottom center",
-        textfont=dict(color='#E65100', family="Arial Black")
-    ))
-
-    # 3. Ajustes de Layout
-    fig_peso_novo.update_layout(
-        title=dict(text="<b>TOTAL PESO MÊS (Comparativo Real vs Média)</b>", x=0.5, xanchor='center'),
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=60, b=30, l=20, r=20)
-    )
-    fig_peso_novo.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, title=None)
-    fig_peso_novo.update_xaxes(showgrid=False, zeroline=False, title=None, type='category')
-
-    st.plotly_chart(fig_peso_novo, use_container_width=True)
-    # ==============================================================================
+    fig_p_n = go.Figure()
+    fig_p_n.add_trace(go.Scatter(x=df_p_m_n["mes_fmt"], y=df_p_m_n["peso"], mode='lines+markers+text', name='Total Peso Real', line=dict(color='#1f618d', width=3), marker=dict(size=8, color='#1f618d'), text=df_p_m_n["peso"].astype(int), textposition="top center", textfont=dict(color='#1f618d', family="Arial Black")))
+    fig_p_n.add_trace(go.Scatter(x=df_p_m_n["mes_fmt"], y=[media_p_ref]*len(df_p_m_n), mode='lines+markers+text', name='Média do Período', line=dict(color='#E65100', width=3), marker=dict(size=8, color='#E65100'), text=[int(media_p_ref)]*len(df_p_m_n), textposition="bottom center", textfont=dict(color='#E65100', family="Arial Black")))
+    fig_p_n.update_layout(title=dict(text="<b>TOTAL PESO MÊS (Comparativo Real vs Média)</b>", x=0.5, xanchor='center'), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(t=60, b=30, l=20, r=20))
+    fig_p_n.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, title=None)
+    fig_p_n.update_xaxes(showgrid=False, zeroline=False, title=None, type='category')
+    st.plotly_chart(fig_p_n, use_container_width=True)
 
     st.markdown("---")
     st.subheader("Comparativo Mensal (Real vs Meta)")
-    mensal = df_filtrado.groupby(pd.Grouper(key="data", freq="ME")).agg(
-        peso_real=("peso", "sum"), qtd=("bombonas", "sum")
-    ).reset_index().sort_values("data")
-    
+    mensal = df_filtrado.groupby(pd.Grouper(key="data", freq="ME")).agg(peso_real=("peso", "sum"), qtd=("bombonas", "sum")).reset_index().sort_values("data")
+    mensal = mensal[mensal["peso_real"] > 0]
     mensal["peso_ideal"] = mensal["qtd"] * META_PESO
-    mensal["mes_str"] = mensal["data"].apply(formata_mes)
-
-    fig_peso = px.bar(mensal, x="mes_str", y="peso_real", text="peso_real", title="Real vs Meta", color_discrete_sequence=["#0083B8"])
-    fig_peso.add_scatter(x=mensal["mes_str"], y=mensal["peso_ideal"], mode='lines+markers+text', 
-                         name='Meta', line=dict(color='#E63946', width=3), text=mensal["peso_ideal"], textposition="top center")
-    
-    fig_peso.update_traces(texttemplate='<b>%{text:.0f}</b>', textposition='outside', selector=dict(type='bar'))
-    fig_peso.update_traces(texttemplate='<b>%{text:.0f}</b>', selector=dict(type='scatter'))
-    fig_peso.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig_peso, use_container_width=True)
+    mensal["mes_str"] = mensal["data"].apply(formata_mes_grafico)
+    fig_p = px.bar(mensal, x="mes_str", y="peso_real", text="peso_real", title="Real vs Meta", color_discrete_sequence=["#0083B8"])
+    fig_p.add_scatter(x=mensal["mes_str"], y=mensal["peso_ideal"], mode='lines+markers+text', name='Meta', line=dict(color='#E63946', width=3), text=mensal["peso_ideal"], textposition="top center")
+    fig_p.update_traces(texttemplate='<b>%{text:.0f}</b>', textposition='outside', selector=dict(type='bar'))
+    fig_p.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'})
+    st.plotly_chart(fig_p, use_container_width=True)
 
     st.markdown("---")
     st.subheader("🔎 Detalhamento dos Indicadores")
+    df_p_a = df_filtrado.groupby(pd.Grouper(key="data", freq="ME")).agg(tp=("peso", "sum"), tb=("bombonas", "sum"), d=("data", "nunique")).reset_index().sort_values("data")
+    df_p_a = df_p_a[df_p_a["tp"] > 0]
+    df_p_a["mes_str"] = df_p_a["data"].apply(formata_mes_grafico)
+    df_p_a["media_p"] = df_p_a["tp"] / df_p_a["d"]
+    df_p_a["dif_m"] = df_p_a["tp"] - (df_p_a["tb"] * META_PESO)
+    df_p_a["dif_d"] = df_p_a["dif_m"] / df_p_a["d"]
 
-    df_peso_analise = df_filtrado.groupby(pd.Grouper(key="data", freq="ME")).agg(
-        total_peso=("peso", "sum"),
-        total_bombonas=("bombonas", "sum"),
-        dias_unicos=("data", "nunique")
-    ).reset_index().sort_values("data")
+    COR_B = ["#FFC300"] 
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(px.bar(df_p_a, x="mes_str", y="tp", text="tp", title="TOTAL PESO MÊS", color_discrete_sequence=COR_B).update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
+    with c2:
+        st.plotly_chart(px.bar(df_p_a, x="mes_str", y="media_p", text="media_p", title="MÉDIA PESO DIA", color_discrete_sequence=COR_B).update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
 
-    df_peso_analise["mes_str"] = df_peso_analise["data"].apply(formata_mes)
-    df_peso_analise["peso_ideal"] = df_peso_analise["total_bombonas"] * META_PESO
-    df_peso_analise["media_peso_dia"] = df_peso_analise["total_peso"] / df_peso_analise["dias_unicos"]
-    df_peso_analise["dif_real_vs_ideal_mes"] = df_peso_analise["total_peso"] - df_peso_analise["peso_ideal"]
-    df_peso_analise["dif_real_vs_ideal_dia"] = df_peso_analise["dif_real_vs_ideal_mes"] / df_peso_analise["dias_unicos"]
+    c3, c4 = st.columns(2)
+    with c3:
+        st.plotly_chart(px.bar(df_p_a, x="mes_str", y="dif_m", text="dif_m", title="DIF. PESO REAL VS IDEAL (MÊS)", color_discrete_sequence=COR_B).update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
+    with c4:
+        st.plotly_chart(px.bar(df_p_a, x="mes_str", y="dif_d", text="dif_d", title="DIF. PESO REAL VS IDEAL (DIA)", color_discrete_sequence=COR_B).update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
 
-    COR_BARRA = ["#FFC300"] 
-
-    row1_c1, row1_c2 = st.columns(2)
-    with row1_c1:
-        fig1 = px.bar(df_peso_analise, x="mes_str", y="total_peso", text="total_peso", title="TOTAL PESO MÊS", color_discrete_sequence=COR_BARRA)
-        fig1.update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>')
-        fig1.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig1, use_container_width=True)
-    with row1_c2:
-        fig2 = px.bar(df_peso_analise, x="mes_str", y="media_peso_dia", text="media_peso_dia", title="MÉDIA PESO DIA", color_discrete_sequence=COR_BARRA)
-        fig2.update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>')
-        fig2.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig2, use_container_width=True)
-
-    row2_c1, row2_c2 = st.columns(2)
-    with row2_c1:
-        fig3 = px.bar(df_peso_analise, x="mes_str", y="dif_real_vs_ideal_mes", text="dif_real_vs_ideal_mes", title="DIF. PESO REAL VS IDEAL (MÊS)", color_discrete_sequence=COR_BARRA)
-        fig3.update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>')
-        fig3.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig3, use_container_width=True)
-    with row2_c2:
-        fig4 = px.bar(df_peso_analise, x="mes_str", y="dif_real_vs_ideal_dia", text="dif_real_vs_ideal_dia", title="DIF. PESO REAL VS IDEAL (DIA)", color_discrete_sequence=COR_BARRA)
-        fig4.update_traces(textposition='outside', texttemplate='<b>%{text:.0f}</b>')
-        fig4.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig4, use_container_width=True)
-
-    # ==============================================================================
-    # ADIÇÃO: NOVOS GRÁFICOS DE PESO (GRUPO E LOCAL)
-    # ==============================================================================
     st.markdown("---")
     st.subheader("📊 Distribuição de Peso (Grupo e Local)")
-    
     col_g, col_l = st.columns(2)
-    
     with col_g:
-        # Peso por Grupo
-        peso_por_grupo = df_filtrado.groupby("grupo")["peso"].sum().reset_index().sort_values("peso", ascending=False)
-        fig_pg = px.bar(peso_por_grupo, x="grupo", y="peso", text="peso", 
-                        title="PESO POR GRUPO", color_discrete_sequence=["#FF9F1C"])
-        fig_pg.update_traces(textposition='outside', texttemplate='<b>%{text:,.0f}</b>')
-        fig_pg.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pg, use_container_width=True)
-
+        p_g = df_filtrado.groupby("grupo")["peso"].sum().reset_index().sort_values("peso", ascending=False)
+        st.plotly_chart(px.bar(p_g, x="grupo", y="peso", text="peso", title="PESO POR GRUPO", color_discrete_sequence=["#FF9F1C"]).update_traces(textposition='outside', texttemplate='<b>%{text:,.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
     with col_l:
-        # Peso por Local
-        peso_por_local = df_filtrado.groupby("local")["peso"].sum().reset_index().sort_values("peso", ascending=False)
-        # Opcional: Pegar top 10 se houver muitos locais
-        peso_por_local = peso_por_local.head(10) 
-        fig_pl = px.bar(peso_por_local, x="local", y="peso", text="peso", 
-                        title="PESO POR LOCAL", # <--- ALTERADO AQUI
-                        color_discrete_sequence=["#2A9D8F"])
-        fig_pl.update_traces(textposition='outside', texttemplate='<b>%{text:,.0f}</b>')
-        fig_pl.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pl, use_container_width=True)
-    # ==============================================================================
+        p_l = df_filtrado.groupby("local")["peso"].sum().reset_index().sort_values("peso", ascending=False).head(10)
+        st.plotly_chart(px.bar(p_l, x="local", y="peso", text="peso", title="PESO POR LOCAL", color_discrete_sequence=["#2A9D8F"]).update_traces(textposition='outside', texttemplate='<b>%{text:,.0f}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)"), use_container_width=True)
 
 
 # --- BOMBONAS ---
 elif st.session_state.pagina_atual == 'Bombonas':
     st.title("🛢️ Análise de Bombonas")
     st.markdown("---")
-
     k1, k2 = st.columns(2)
     k1.metric("Total", int(total_bombonas))
-    media = total_bombonas / df_filtrado["data"].nunique()
-    k2.metric("Média/Dia", f"{media:.1f}")
+    k2.metric("Média/Dia", f"{(total_bombonas / df_filtrado['data'].nunique()):.1f}")
 
-    # ==============================================================================
-    # GRÁFICO ESTILO IMAGEM (TOTAL BOMBONAS MES - LINHAS COMBINADAS)
-    # ==============================================================================
     st.markdown("---")
-    
-    # 1. Preparação dos dados
-    df_new_chart = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index().sort_values("data")
-    
-    # Formatação de data estilo imagem (jan.25, fev.25)
-    df_new_chart["mes_fmt"] = df_new_chart["data"].apply(formata_mes_abrev_ano)
-    
-    # Cálculo da média geral do período filtrado (para a linha laranja)
-    media_ref = df_new_chart["bombonas"].mean()
-    df_new_chart["media_ref_val"] = media_ref
+    df_n_c = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index().sort_values("data")
+    df_n_c = df_n_c[df_n_c["bombonas"] > 0]
+    df_n_c["mes_fmt"] = df_n_c["data"].apply(formata_mes_abrev_ano)
+    media_r = df_n_c["bombonas"].mean()
 
-    # 2. Construção do Gráfico
-    fig_new = go.Figure()
-
-    # Linha Azul (Total do Mês)
-    fig_new.add_trace(go.Scatter(
-        x=df_new_chart["mes_fmt"],
-        y=df_new_chart["bombonas"],
-        mode='lines+markers+text',
-        name='Total Mês',
-        line=dict(color='#1f618d', width=3),
-        marker=dict(size=8, color='#1f618d'),
-        text=df_new_chart["bombonas"],
-        textposition="top center",
-        textfont=dict(color='#1f618d', family="Arial Black")
-    ))
-
-    # Linha Laranja (Média Referência)
-    fig_new.add_trace(go.Scatter(
-        x=df_new_chart["mes_fmt"],
-        y=df_new_chart["media_ref_val"],
-        mode='lines+markers+text',
-        name='Média do Período',
-        line=dict(color='#E65100', width=3),
-        marker=dict(size=8, color='#E65100'),
-        text=df_new_chart["media_ref_val"].astype(int),
-        textposition="bottom center",
-        textfont=dict(color='#E65100', family="Arial Black")
-    ))
-
-    # 3. Ajustes de Layout
-    fig_new.update_layout(
-        title=dict(text="<b>TOTAL BOMBONAS MES (Comparativo)</b>", x=0.5, xanchor='center'),
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=50, b=20, l=20, r=20)
-    )
-    fig_new.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, title=None)
-    fig_new.update_xaxes(showgrid=False, zeroline=False, title=None, type='category')
-
-    st.plotly_chart(fig_new, use_container_width=True)
-    # ==============================================================================
-    
+    fig_n = go.Figure()
+    fig_n.add_trace(go.Scatter(x=df_n_c["mes_fmt"], y=df_n_c["bombonas"], mode='lines+markers+text', name='Total Mês', line=dict(color='#1f618d', width=3), marker=dict(size=8, color='#1f618d'), text=df_n_c["bombonas"], textposition="top center", textfont=dict(color='#1f618d', family="Arial Black")))
+    fig_n.add_trace(go.Scatter(x=df_n_c["mes_fmt"], y=[media_r]*len(df_n_c), mode='lines+markers+text', name='Média do Período', line=dict(color='#E65100', width=3), marker=dict(size=8, color='#E65100'), text=[int(media_r)]*len(df_n_c), textposition="bottom center", textfont=dict(color='#E65100', family="Arial Black")))
+    fig_n.update_layout(title=dict(text="<b>TOTAL BOMBONAS MÊS (Comparativo)</b>", x=0.5, xanchor='center'), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), margin=dict(t=50, b=20, l=20, r=20))
+    fig_n.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, title=None)
+    fig_n.update_xaxes(showgrid=False, zeroline=False, title=None, type='category')
+    st.plotly_chart(fig_n, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 📊 Evolução Mensal (Barras)") 
-    df_bombonas_mes = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index().sort_values("data")
-    df_bombonas_mes["mes_str"] = df_bombonas_mes["data"].apply(formata_mes)
+    df_e_b = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index().sort_values("data")
+    df_e_b = df_e_b[df_e_b["bombonas"] > 0]
+    df_e_b["mes_str"] = df_e_b["data"].apply(formata_mes_grafico)
+    st.plotly_chart(px.bar(df_e_b, x="mes_str", y="bombonas", text="bombonas", title="TOTAL BOMBONAS MÊS", color_discrete_sequence=["#1f618d"]).update_traces(textposition='outside', texttemplate='<b>%{text}</b>').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
 
-    fig_total_mes = px.bar(df_bombonas_mes, x="mes_str", y="bombonas", text="bombonas", 
-                           title="TOTAL BOMBONAS MÊS", color_discrete_sequence=["#1f618d"]) 
-    fig_total_mes.update_traces(textposition='outside', texttemplate='<b>%{text}</b>')
-    fig_total_mes.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig_total_mes, use_container_width=True)
     st.markdown("---")
-
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Por Grupo")
-        g_grupo = df_filtrado.groupby("grupo")["bombonas"].sum().reset_index()
-        fig_grupo = px.bar(g_grupo, x="grupo", y="bombonas", text="bombonas", color_discrete_sequence=["#FF9F1C"])
-        fig_grupo.update_traces(textposition='outside', texttemplate='<b>%{text}</b>')
-        fig_grupo.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_grupo, use_container_width=True)
-    
+        st.plotly_chart(px.bar(df_filtrado.groupby("grupo")["bombonas"].sum().reset_index(), x="grupo", y="bombonas", text="bombonas", title="Por Grupo", color_discrete_sequence=["#FF9F1C"]).update_traces(textposition='outside'), use_container_width=True)
     with c2:
-        st.subheader("Por Local")
-        g_local = df_filtrado.groupby("local")["bombonas"].sum().reset_index().sort_values("bombonas", ascending=False).head(10)
-        fig_bar = px.bar(g_local, x="local", y="bombonas", text="bombonas", color_discrete_sequence=["#2A9D8F"])
-        fig_bar.update_traces(textposition='outside', texttemplate='<b>%{text}</b>')
-        fig_bar.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(px.bar(df_filtrado.groupby("local")["bombonas"].sum().reset_index().sort_values("bombonas", ascending=False).head(10), x="local", y="bombonas", text="bombonas", title="Por Local", color_discrete_sequence=["#2A9D8F"]).update_traces(textposition='outside'), use_container_width=True)
     
     st.markdown("---")
     st.subheader("📈 Média de Bombonas por Dia (Evolução por Local)")
-
-    df_media_evolucao = df_filtrado.groupby([pd.Grouper(key="data", freq="ME"), "local"]).agg(
-        total_bombonas=("bombonas", "sum"),
-        dias_unicos=("data", "nunique")
-    ).reset_index()
-
-    df_media_evolucao["media_dia"] = df_media_evolucao["total_bombonas"] / df_media_evolucao["dias_unicos"]
-    df_media_evolucao["mes_str"] = df_media_evolucao["data"].apply(formata_mes)
-    df_media_evolucao = df_media_evolucao.sort_values("data")
-
-    fig_line_media = px.line(
-        df_media_evolucao, x="mes_str", y="media_dia", color="local", 
-        text="media_dia", markers=True, title="Média Diária por Local"
-    )
-    fig_line_media.update_traces(textposition="top center", texttemplate="<b>%{text:.2f}</b>")
-    fig_line_media.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)", legend_title_text="Local")
-    st.plotly_chart(fig_line_media, use_container_width=True)
+    df_m_e = df_filtrado.groupby([pd.Grouper(key="data", freq="ME"), "local"]).agg(tb=("bombonas", "sum"), d=("data", "nunique")).reset_index()
+    df_m_e = df_m_e[df_m_e["tb"] > 0]
+    df_m_e["media_dia"] = df_m_e["tb"] / df_m_e["d"]
+    df_m_e["mes_str"] = df_m_e["data"].apply(formata_mes_grafico)
+    st.plotly_chart(px.line(df_m_e.sort_values("data"), x="mes_str", y="media_dia", color="local", text="media_dia", markers=True, title="Média Diária por Local").update_traces(textposition="top center", texttemplate="<b>%{text:.2f}</b>").update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
 
 
 # --- FINANCEIRO ---
 elif st.session_state.pagina_atual == 'Financeiro':
     st.title("💰 Financeiro")
     st.markdown("---")
-
     f1, f2 = st.columns(2)
     v1 = f"R$ {total_bombonas * PRECO_BASE:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     v2 = f"R$ {gasto_estimado:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -490,11 +329,8 @@ elif st.session_state.pagina_atual == 'Financeiro':
     f2.metric(f"Estimado (R$ {PRECO_ESTIMADO})", v2)
 
     st.subheader("Evolução de Gastos (R$)")
-    fin_mes = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index()
-    fin_mes["custo"] = fin_mes["bombonas"] * PRECO_ESTIMADO
-    fin_mes["mes_str"] = fin_mes["data"].apply(formata_mes)
-    
-    fig_fin = px.bar(fin_mes, x="mes_str", y="custo", text="custo", title="Custo Mensal Estimado", color_discrete_sequence=["#2ca02c"])
-    fig_fin.update_traces(texttemplate='<b>R$ %{text:,.2f}</b>', textposition='outside')
-    fig_fin.update_layout(yaxis_title=None, xaxis_title=None, plot_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig_fin, use_container_width=True)
+    fin_m = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index()
+    fin_m = fin_m[fin_m["bombonas"] > 0]
+    fin_m["custo"] = fin_m["bombonas"] * PRECO_ESTIMADO
+    fin_m["mes_str"] = fin_m["data"].apply(formata_mes_grafico)
+    st.plotly_chart(px.bar(fin_m, x="mes_str", y="custo", text="custo", title="Custo Mensal Estimado", color_discrete_sequence=["#2ca02c"]).update_traces(texttemplate='<b>R$ %{text:,.2f}</b>', textposition='outside').update_layout(plot_bgcolor="rgba(0,0,0,0)", xaxis={'type': 'category'}), use_container_width=True)
