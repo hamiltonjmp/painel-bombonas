@@ -304,7 +304,7 @@ elif st.session_state.pagina_atual == 'Peso':
     k3.metric("DIFERENÇA", formata_numero_br(diferenca_peso), delta_color="inverse")
 
     st.markdown("---")
-    exibir_comparativo_travado(df, "peso", "Comparativo de Peso")
+    exibir_comparativo_travado(df_filtrado, "peso", "Comparativo de Peso")
     
     st.markdown("---")
     df_p_m_n = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["peso"].sum().reset_index().sort_values("data")
@@ -371,7 +371,7 @@ elif st.session_state.pagina_atual == 'Bombonas':
     k2.metric("MÉDIA/DIA", int(total_bombonas / df_filtrado['data'].nunique()) if df_filtrado['data'].nunique() > 0 else 0)
 
     st.markdown("---")
-    exibir_comparativo_travado(df, "bombonas", "Comparativo de Bombonas")
+    exibir_comparativo_travado(df_filtrado, "bombonas", "Comparativo de Bombonas")
 
     st.markdown("---")
     df_n_c = df_filtrado.groupby(pd.Grouper(key="data", freq="ME"))["bombonas"].sum().reset_index().sort_values("data")
@@ -416,7 +416,7 @@ elif st.session_state.pagina_atual == 'Financeiro':
     
     # === AQUI ESTÁ O AJUSTE ===
     # Criamos uma cópia do DataFrame base e calculamos o valor financeiro real
-    df_financeiro = df.copy()
+    df_financeiro = df_filtrado.copy()
     df_financeiro["custo_total_estimado"] = df_financeiro["bombonas"] * PRECO_ESTIMADO
 
     # Passamos a nova coluna calculada para o gráfico comparativo
