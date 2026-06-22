@@ -413,7 +413,15 @@ elif st.session_state.pagina_atual == 'Financeiro':
     f2.metric("CUSTO BASE", formata_numero_br(gasto_estimado, "R$ "))
 
     st.markdown("---")
-    exibir_comparativo_travado(df, "bombonas", "Comparativo Financeiro", prefixo="R$ ")
+    
+    # === AQUI ESTÁ O AJUSTE ===
+    # Criamos uma cópia do DataFrame base e calculamos o valor financeiro real
+    df_financeiro = df.copy()
+    df_financeiro["custo_total_estimado"] = df_financeiro["bombonas"] * PRECO_ESTIMADO
+
+    # Passamos a nova coluna calculada para o gráfico comparativo
+    exibir_comparativo_travado(df_financeiro, "custo_total_estimado", "Comparativo Financeiro", prefixo="R$ ")
+    # ==========================
 
     st.markdown("---")
     st.subheader("Custo Mensal Mes a Mes")
